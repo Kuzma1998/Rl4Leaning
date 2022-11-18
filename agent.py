@@ -4,7 +4,7 @@ code:
 Author: Li Jiaxin
 Date: 2022-11-11 16:59:47
 LastEditors: Li Jiaxin
-LastEditTime: 2022-11-17 11:03:03
+LastEditTime: 2022-11-18 15:34:07
 '''
 import numpy as np
 import torch
@@ -55,10 +55,10 @@ class DDPG:
         action = torch.tensor(np.array([item.detach().numpy() for item in list(action)])).to(self.device)
 
        
-        policy_loss = self.critic(state, self.actor(state,action)) # policy的优化只看Q函数，目的是要使Q(s,a)最大
+        policy_loss = self.critic(state, action) # policy的优化只看Q函数，目的是要使Q(s,a)最大
         policy_loss = -policy_loss.mean()  
         # Q_func 优化目标，最小化TD error
-        next_action = self.target_actor(next_state,action)
+        next_action = self.target_actor(next_state,self.actor(state,action))
         target_value = self.target_critic(next_state, next_action.detach())
         expected_value = reward + self.gamma * target_value # 期望的Q值等于此刻reward+下一个状态的value
         expected_value = torch.clamp(expected_value, -torch.inf, torch.inf)
@@ -69,9 +69,13 @@ class DDPG:
         
         self.actor_optimizer.zero_grad()
         policy_loss.backward()
+        # nn.utils.clip_grad_norm_(
+        #     self.actor.parameters(), max_norm=5, norm_type=2)
         self.actor_optimizer.step()
         self.critic_optimizer.zero_grad()
         value_loss.backward()
+        # nn.utils.clip_grad_norm_(
+        #     self.critic.parameters(), max_norm=5, norm_type=2)
         self.critic_optimizer.step()
         # 软更新
         for target_param, param in zip(self.target_critic.parameters(), self.critic.parameters()):

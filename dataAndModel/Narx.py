@@ -155,7 +155,7 @@ def train(epochs):
         # test(loss_test, epoch)
     # plot_loss(loss_train, loss_test)
     model.eval()
-    torch.save(model, 'condition_1_model.pkl')
+    # torch.save(model, 'condition_1_model.pkl')
 
 def eval_train():
     train = MyDataset(path,
@@ -227,7 +227,7 @@ if __name__ == '__main__':
     path = 'Condition 1.xlsx'
     INPUT_SEQLEN = 4
     OUTPUT_SEQLEN = 1
-    epochs = 200
+    epochs = 500
     LR = 0.0001
     batch_size = 128
     model = Net().to(device)

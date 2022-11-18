@@ -4,7 +4,7 @@ code:
 Author: Li Jiaxin
 Date: 2022-11-11 17:12:12
 LastEditors: Li Jiaxin
-LastEditTime: 2022-11-17 17:28:23
+LastEditTime: 2022-11-18 15:57:03
 '''
 import numpy as np
 import pandas as pd
@@ -23,8 +23,11 @@ class Env:
 
         self.state_auxiliary = pd.read_excel(
             self.data_path, header=0, usecols=[0, 1, 2, 3, 4, 5]).values
-        self.x = pd.read_excel(self.data_path, usecols=[6]).values
-        self.y = pd.read_excel(self.data_path, usecols=[7]).values
+
+        self.x = pd.read_excel(self.data_path, usecols=[
+                               6]).values  # 实际的控制量，没有归一化
+        self.y = pd.read_excel(self.data_path, usecols=[
+                               7]).values  # 实际pH，没有归一化
 
         self.state_auxiliary_scaler = StandardScaler()
         self.x_scaler = StandardScaler()
@@ -32,18 +35,20 @@ class Env:
 
         self.state_auxiliary = self.state_auxiliary_scaler.fit_transform(
             self.state_auxiliary)
-        self.x = self.x_scaler.fit_transform(self.x)
-        self.y = self.y_scaler.fit_transform(self.y)
 
+        self.y_true = self.y_scaler.fit_transform(self.y)  # RL pH
+        self.x_true = self.x_scaler.fit_transform(self.x)  # RL 废酸
+
+        # self.x = torch.from_numpy(self.x).type(torch.float32)  # 人工的废酸
+        # self.y = torch.from_numpy(self.y).type(torch.float32)  # 人工控制下的pH
+
+        self.x_true = torch.from_numpy(self.x_true).type(torch.float32)
+        self.y_true = torch.from_numpy(self.y_true).type(torch.float32)
         self.state_auxiliary = torch.from_numpy(
             self.state_auxiliary).type(torch.float32)
-        self.x = torch.from_numpy(self.x).type(torch.float32)  # 人工的废酸
-        self.y = torch.from_numpy(self.y).type(torch.float32)  # 人工控制下的pH
-
-        self.y_true = self.y  # RL pH
-        self.x_true = self.x  # RL 废酸
 
         self.noise = OUNoise()  # 初始化一个噪音
+        self.update_times = 0
 
     def reset(self):
         # state_init = self.inverse(self.y[3])-self.setpoint
@@ -52,14 +57,16 @@ class Env:
         return state_init, action_init
 
     def inverse(self, y):
-        return y * sqrt(self.y_scaler.var_) + self.y_scaler.mean_ 
+        return y * sqrt(self.y_scaler.var_) + self.y_scaler.mean_
 
     def step(self, action, state_idx, is_train):
         if is_train:
             action = self.noise.get_action(
-                (action.detach().numpy() + 1) * 45, state_idx)
+                (action.numpy() + 1) * 60, state_idx)
         else:
-            action = (action + 1) * 45
+            action = (action + 1) * 60
+
+        self.x[state_idx] = action
         self.x_true[state_idx] = (
             action-self.x_scaler.mean_)/sqrt(self.x_scaler.var_)
 
@@ -68,21 +75,28 @@ class Env:
 
         # 下一时刻输出预测
         state_idx += 1
-        self.y[state_idx] = self.model(current_input).detach()
-        # next_state = self.inverse(self.y[state_idx]) - self.setpoint
+        self.y_true[state_idx] = self.model(current_input).detach()
+
+        self.y[state_idx] = torch.clamp(
+            self.y_true[state_idx] * sqrt(self.y_scaler.var_) + self.y_scaler.mean_, 2, 4.8)
+
         next_state = torch.cat(
             [self.state_auxiliary[state_idx], self.y_true[state_idx]], 0)
         reward = self.calculate_reward(state_idx).type(torch.float32)
 
-        return next_state, reward
+        return next_state, reward, self.x_true[state_idx-1]
 
     def get_result(self):
-        return self.inverse(self.y_true), self.x_true * sqrt(self.x_scaler.var_) + self.x_scaler.mean_ 
+        return self.inverse(self.y_true), self.x_true * sqrt(self.x_scaler.var_) + self.x_scaler.mean_
 
     def calculate_reward(self, state_idx):
-        dy = self.y_true[state_idx] * \
-            sqrt(self.y_scaler.var_) + self.y_scaler.mean_ - self.setpoint
-        return -dy*dy
+        dy = self.y[state_idx] - self.setpoint
+        return torch.from_numpy(-dy*dy).type(torch.float32)
+
+    def normalize(self):
+        self.y_scaler.fit_transform(self.y)  # RL pH
+        self.x_scaler.fit_transform(self.x)  # RL 废酸
+        print(self.x_scaler.mean_,self.x_scaler.var_)
 
 
 class NormalizedActions():
@@ -110,7 +124,7 @@ class OUNoise(object):
     '''Ornstein–Uhlenbeck噪声
     '''
 
-    def __init__(self, mu=0.0, theta=0.15, max_sigma=0.3, min_sigma=0.3, decay_period=100000):
+    def __init__(self, mu=3, theta=0.15, max_sigma=3, min_sigma=2, decay_period=1000):
         self.mu = mu  # OU噪声的参数
         self.theta = theta  # OU噪声的参数
         self.sigma = max_sigma  # OU噪声的参数
@@ -119,7 +133,7 @@ class OUNoise(object):
         self.decay_period = decay_period
         self.action_dim = 1
         self.low = 0
-        self.high = 90
+        self.high = 120
         self.reset()
 
     def reset(self):
@@ -139,7 +153,4 @@ class OUNoise(object):
             min(1.0, t / self.decay_period)  # sigma会逐渐衰减
         # 动作加上噪声后进行剪切
         return torch.from_numpy(np.clip(action + ou_obs, self.low, self.high)).type(torch.float32)
-
-
-if __name__ == "__main__":
-    env = Env()
+        # return np.clip(action + ou_obs, self.low, self.high)
