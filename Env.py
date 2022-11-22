@@ -4,7 +4,7 @@ code:
 Author: Li Jiaxin
 Date: 2022-11-11 17:12:12
 LastEditors: Li Jiaxin
-LastEditTime: 2022-11-22 10:07:13
+LastEditTime: 2022-11-22 10:22:08
 '''
 import numpy as np
 import pandas as pd
@@ -61,11 +61,9 @@ class Env:
 
     def step(self, action, state_idx, is_train):
         if is_train:
-            # action = self.noise.get_action(
-            #     (action + 1) * 60, state_idx) 
-            action = np.clip((action + 1) * 60 + (np.random.randn()*5),0,120)
+            action = np.clip(self.x[state_idx-1] + (action) * 10 + (np.random.randn()*5),0,120)
         else:
-            action = (action + 1) * 60
+            action = self.x[state_idx] + (action) * 10
 
         self.x[state_idx] = action
         self.x_norm[state_idx] = (
