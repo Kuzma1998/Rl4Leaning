@@ -4,7 +4,7 @@ code:
 Author: Li Jiaxin
 Date: 2022-11-11 17:12:12
 LastEditors: Li Jiaxin
-LastEditTime: 2022-11-18 15:57:03
+LastEditTime: 2022-11-22 10:07:13
 '''
 import numpy as np
 import pandas as pd
@@ -36,24 +36,24 @@ class Env:
         self.state_auxiliary = self.state_auxiliary_scaler.fit_transform(
             self.state_auxiliary)
 
-        self.y_true = self.y_scaler.fit_transform(self.y)  # RL pH
-        self.x_true = self.x_scaler.fit_transform(self.x)  # RL 废酸
+        self.y_norm = self.y_scaler.fit_transform(self.y)  # RL pH
+        self.x_norm = self.x_scaler.fit_transform(self.x)  # RL 废酸
 
         # self.x = torch.from_numpy(self.x).type(torch.float32)  # 人工的废酸
         # self.y = torch.from_numpy(self.y).type(torch.float32)  # 人工控制下的pH
 
-        self.x_true = torch.from_numpy(self.x_true).type(torch.float32)
-        self.y_true = torch.from_numpy(self.y_true).type(torch.float32)
-        self.state_auxiliary = torch.from_numpy(
-            self.state_auxiliary).type(torch.float32)
+        # self.x_norm = torch.from_numpy(self.x_norm).type(torch.float32)
+        # self.y_norm = torch.from_numpy(self.y_norm).type(torch.float32)
+        # self.state_auxiliary = torch.from_numpy(
+        #     self.state_auxiliary).type(torch.float32)
 
         self.noise = OUNoise()  # 初始化一个噪音
         self.update_times = 0
 
     def reset(self):
         # state_init = self.inverse(self.y[3])-self.setpoint
-        state_init = torch.cat([self.state_auxiliary[3], self.y_true[3]], 0)
-        action_init = self.x_true[2]
+        state_init = np.concatenate([self.state_auxiliary[3], self.y_norm[3]], 0)
+        action_init = self.x_norm[2]
         return state_init, action_init
 
     def inverse(self, y):
@@ -61,41 +61,44 @@ class Env:
 
     def step(self, action, state_idx, is_train):
         if is_train:
-            action = self.noise.get_action(
-                (action.numpy() + 1) * 60, state_idx)
+            # action = self.noise.get_action(
+            #     (action + 1) * 60, state_idx) 
+            action = np.clip((action + 1) * 60 + (np.random.randn()*5),0,120)
         else:
             action = (action + 1) * 60
 
         self.x[state_idx] = action
-        self.x_true[state_idx] = (
+        self.x_norm[state_idx] = (
             action-self.x_scaler.mean_)/sqrt(self.x_scaler.var_)
 
-        current_input = torch.cat([self.state_auxiliary[state_idx-3], self.x_true[state_idx-3], self.y_true[state_idx-3], self.state_auxiliary[state_idx-2], self.x_true[state_idx-2], self.y_true[state_idx-2],
-                                   self.state_auxiliary[state_idx-1], self.x_true[state_idx-1], self.y_true[state_idx-1], self.state_auxiliary[state_idx], self.x_true[state_idx], self.y_true[state_idx]], 0)
+        current_input = np.concatenate([self.state_auxiliary[state_idx-3], self.x_norm[state_idx-3], self.y_norm[state_idx-3], self.state_auxiliary[state_idx-2], self.x_norm[state_idx-2], self.y_norm[state_idx-2],
+                                   self.state_auxiliary[state_idx-1], self.x_norm[state_idx-1], self.y_norm[state_idx-1], self.state_auxiliary[state_idx], self.x_norm[state_idx], self.y_norm[state_idx]], 0)
 
+        current_input =  torch.from_numpy(current_input).type(torch.float32)
         # 下一时刻输出预测
         state_idx += 1
-        self.y_true[state_idx] = self.model(current_input).detach()
+        self.y_norm[state_idx] = self.model(current_input).detach().numpy()
 
-        self.y[state_idx] = torch.clamp(
-            self.y_true[state_idx] * sqrt(self.y_scaler.var_) + self.y_scaler.mean_, 2, 4.8)
+        self.y[state_idx] = np.clip(
+           (self.y_norm[state_idx] * sqrt(self.y_scaler.var_) + self.y_scaler.mean_) , 2, 4.5)
 
-        next_state = torch.cat(
-            [self.state_auxiliary[state_idx], self.y_true[state_idx]], 0)
-        reward = self.calculate_reward(state_idx).type(torch.float32)
+        next_state = np.concatenate(
+            [self.state_auxiliary[state_idx], self.y_norm[state_idx]], 0)
+        reward = self.calculate_reward(state_idx)
 
-        return next_state, reward, self.x_true[state_idx-1]
+        return next_state, reward, self.x_norm[state_idx-1]
 
     def get_result(self):
-        return self.inverse(self.y_true), self.x_true * sqrt(self.x_scaler.var_) + self.x_scaler.mean_
+        return self.y, self.x
 
     def calculate_reward(self, state_idx):
         dy = self.y[state_idx] - self.setpoint
-        return torch.from_numpy(-dy*dy).type(torch.float32)
+        # du = self.x[state_idx] - self.x[state_idx-1]
+        return -dy*dy
 
     def normalize(self):
-        self.y_scaler.fit_transform(self.y)  # RL pH
-        self.x_scaler.fit_transform(self.x)  # RL 废酸
+        self.y_scaler.fit_transform(self.y[:])  # RL pH
+        self.x_scaler.fit_transform(self.x[:])  # RL 废酸
         print(self.x_scaler.mean_,self.x_scaler.var_)
 
 
@@ -153,4 +156,4 @@ class OUNoise(object):
             min(1.0, t / self.decay_period)  # sigma会逐渐衰减
         # 动作加上噪声后进行剪切
         return torch.from_numpy(np.clip(action + ou_obs, self.low, self.high)).type(torch.float32)
-        # return np.clip(action + ou_obs, self.low, self.high)
+        return np.clip(action + ou_obs, self.low, self.high)

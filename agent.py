@@ -4,7 +4,7 @@ code:
 Author: Li Jiaxin
 Date: 2022-11-11 16:59:47
 LastEditors: Li Jiaxin
-LastEditTime: 2022-11-18 15:34:07
+LastEditTime: 2022-11-18 18:43:43
 '''
 import numpy as np
 import torch
@@ -38,7 +38,8 @@ class DDPG:
         self.gamma = cfg.gamma
 
     def choose_action(self, state,last_action):
-        # state = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+        state = torch.tensor(state).to(self.device).type(torch.float32)
+        last_action = torch.tensor(last_action).to(self.device).type(torch.float32)
         action = self.actor(state,last_action)
         return action
 
@@ -48,17 +49,17 @@ class DDPG:
         # 从经验回放中(replay memory)中随机采样一个批量的转移(transition)
         state, action, reward, next_state = self.memory.sample(self.batch_size)
         # 转变为张量
-        state = torch.tensor(np.array([item.detach().numpy() for item in list(state)])).to(self.device)
+        state = torch.tensor(np.array(state)).to(self.device).type(torch.float32)
 
-        next_state = torch.tensor(np.array([item.detach().numpy() for item in list(next_state)])).to(self.device)
-        reward = torch.tensor(np.array([item.detach().numpy() for item in list(reward)])).to(self.device)
-        action = torch.tensor(np.array([item.detach().numpy() for item in list(action)])).to(self.device)
+        next_state = torch.tensor(np.array(next_state)).to(self.device).type(torch.float32)
+        reward = torch.tensor(np.array(reward)).to(self.device).type(torch.float32)
+        action = torch.tensor(np.array(action)).to(self.device).type(torch.float32)
 
        
         policy_loss = self.critic(state, action) # policy的优化只看Q函数，目的是要使Q(s,a)最大
         policy_loss = -policy_loss.mean()  
         # Q_func 优化目标，最小化TD error
-        next_action = self.target_actor(next_state,self.actor(state,action))
+        next_action = self.target_actor(next_state, self.actor(state,action))
         target_value = self.target_critic(next_state, next_action.detach())
         expected_value = reward + self.gamma * target_value # 期望的Q值等于此刻reward+下一个状态的value
         expected_value = torch.clamp(expected_value, -torch.inf, torch.inf)
