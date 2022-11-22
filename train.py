@@ -56,8 +56,8 @@ def train(cfg, env, agent):
         i_step = 3
         env.noise.reset()
         env.update_times += 1
-        if env.update_times % 10 == 0:
-            env.normalize()
+        # if env.update_times % 10 == 0:
+        #     env.normalize()
         while i_step < 515:
             # action = action.detach()
             action = agent.choose_action(state, action).detach().numpy()
